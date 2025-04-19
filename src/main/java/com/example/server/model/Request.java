@@ -1,10 +1,15 @@
 package com.example.server.model;
 
-import java.io.Serializable;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class Request implements Serializable {
+public class Request {
+    @JsonProperty("command")
     private String command;
+
+    @JsonProperty("data")
     private String data;
+
+    public Request() {} // Пустой конструктор для Jackson
 
     public Request(String command, String data) {
         this.command = command;

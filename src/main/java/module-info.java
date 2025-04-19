@@ -1,10 +1,8 @@
 module com.example.server {
-    requires javafx.controls;
-    requires javafx.fxml;
     requires java.sql;
+    requires com.fasterxml.jackson.databind;
+
     exports com.example.server;
     exports com.example.server.model;
-
-    opens com.example.server to javafx.fxml;
-
+    opens com.example.server.model to com.fasterxml.jackson.databind;
 }

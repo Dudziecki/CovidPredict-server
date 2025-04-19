@@ -1,9 +1,12 @@
 package com.example.server.model;
 
-import java.io.Serializable;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class Response implements Serializable {
+public class Response {
+    @JsonProperty("message")
     private String message;
+
+    public Response() {} // Пустой конструктор для Jackson
 
     public Response(String message) {
         this.message = message;
