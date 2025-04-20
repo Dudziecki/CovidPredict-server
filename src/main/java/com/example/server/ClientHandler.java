@@ -1,8 +1,6 @@
 package com.example.server;
 
-import com.example.server.model.Request;
-import com.example.server.model.Response;
-import com.example.server.model.User;
+import com.example.server.model.*;
 import com.example.server.service.AuthService;
 import com.example.server.dao.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +10,7 @@ import java.net.Socket;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.List;
 
 public class ClientHandler implements Runnable {
     private final Socket socket;
@@ -19,6 +18,7 @@ public class ClientHandler implements Runnable {
     private final String dbUser;
     private final String dbPassword;
     private final ObjectMapper objectMapper;
+    private User currentUser;
 
     public ClientHandler(Socket socket, String dbUrl, String dbUser, String dbPassword) {
         this.socket = socket;
@@ -26,6 +26,7 @@ public class ClientHandler implements Runnable {
         this.dbUser = dbUser;
         this.dbPassword = dbPassword;
         this.objectMapper = new ObjectMapper();
+        this.currentUser = null;
     }
 
     @Override
@@ -34,18 +35,14 @@ public class ClientHandler implements Runnable {
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
              Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
 
-            // Цикл для обработки нескольких запросов от клиента
             String jsonRequest;
             while ((jsonRequest = reader.readLine()) != null) {
-                // Десериализуем JSON в объект Request
+                System.out.println("Received request: " + jsonRequest);
                 Request request = objectMapper.readValue(jsonRequest, Request.class);
 
-                // Обрабатываем запрос
                 Response response = processRequest(request, conn);
-
-                // Сериализуем ответ в JSON
                 String jsonResponse = objectMapper.writeValueAsString(response);
-                // Отправляем JSON-строку
+                System.out.println("Sending response: " + jsonResponse);
                 writer.write(jsonResponse + "\n");
                 writer.flush();
             }
@@ -65,31 +62,220 @@ public class ClientHandler implements Runnable {
         DatabaseManager dbManager = new DatabaseManager(conn);
         UserDAO userDAO = new UserDAO(dbManager);
         LogDAO logDAO = new LogDAO(dbManager);
+        EpidemicDataDAO epidemicDataDAO = new EpidemicDataDAO(dbManager);
         AuthService authService = new AuthService(userDAO, logDAO);
 
-        switch (request.getCommand()) {
-            case "LOGIN":
-                String[] creds = request.getData().split(":");
-                String username = creds[0];
-                String password = creds[1];
-                User user = authService.login(username, password);
-                if (user != null) {
-                    return new Response("SUCCESS:" + user.getRole());
-                }
-                return new Response("FAIL");
+        if (request.getCommand() == null) {
+            return new Response("FAIL: Invalid request command");
+        }
 
-            case "REGISTER":
-                String[] regData = request.getData().split(":");
-                String regUsername = regData[0];
-                String regPassword = regData[1];
-                boolean registered = authService.register(regUsername, regPassword, "guest");
-                if (registered) {
-                    return new Response("SUCCESS");
-                }
-                return new Response("FAIL");
+        try {
+            switch (request.getCommand()) {
+                case "LOGIN":
+                    if (request.getData() == null) {
+                        System.out.println("LOGIN failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    LoginData loginData = objectMapper.readValue(request.getData(), LoginData.class);
+                    String username = loginData.getUsername();
+                    String password = loginData.getPassword();
+                    if (username == null || username.trim().isEmpty() || password == null || password.trim().isEmpty()) {
+                        System.out.println("LOGIN failed: Invalid login data");
+                        return new Response("FAIL: Invalid login data");
+                    }
+                    User user = authService.login(username, password);
+                    if (user != null) {
+                        this.currentUser = user;
+                        System.out.println("LOGIN success for user: " + username);
+                        return new Response("SUCCESS:" + user.getRole());
+                    }
+                    System.out.println("LOGIN failed: Invalid credentials for user: " + username);
+                    return new Response("FAIL");
 
-            default:
-                return new Response("FAIL: Unknown command");
+                case "REGISTER":
+                    if (request.getData() == null) {
+                        System.out.println("REGISTER failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    RegisterData regData = objectMapper.readValue(request.getData(), RegisterData.class);
+                    String regUsername = regData.getUsername();
+                    String regPassword = regData.getPassword();
+                    String role = regData.getRole();
+                    if (regUsername == null || regUsername.trim().isEmpty() || regPassword == null || regPassword.trim().isEmpty()) {
+                        System.out.println("REGISTER failed: Invalid registration data");
+                        return new Response("FAIL: Invalid registration data");
+                    }
+                    boolean registered = authService.register(regUsername, regPassword, role != null ? role : "guest");
+                    if (registered) {
+                        System.out.println("REGISTER success for user: " + regUsername);
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("REGISTER failed: User already exists: " + regUsername);
+                    return new Response("FAIL");
+
+                case "SUBMIT_DATA":
+                    if (currentUser == null) {
+                        System.out.println("SUBMIT_DATA failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("SUBMIT_DATA failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    EpidemicData epidemicData = objectMapper.readValue(request.getData(), EpidemicData.class);
+                    String region = epidemicData.getRegion();
+                    String date = epidemicData.getDate();
+                    int infected = epidemicData.getInfected();
+                    if (region == null || region.trim().isEmpty() || date == null || date.trim().isEmpty() || infected < 0) {
+                        System.out.println("SUBMIT_DATA failed: Invalid epidemic data");
+                        return new Response("FAIL: Invalid epidemic data");
+                    }
+                    boolean saved = epidemicDataDAO.saveEpidemicData(currentUser.getUserId(), region, date, infected);
+                    if (saved) {
+                        System.out.println("SUBMIT_DATA success for user " + currentUser.getUsername());
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("SUBMIT_DATA failed: Could not save to database");
+                    return new Response("FAIL");
+
+                case "GET_ALL_DATA":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("GET_ALL_DATA failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    List<EpidemicDataDAO.EpidemicDataWithUsername> allData = epidemicDataDAO.getAllData();
+                    String jsonData = objectMapper.writeValueAsString(allData);
+                    System.out.println("GET_ALL_DATA success for user " + currentUser.getUsername());
+                    return new Response("SUCCESS:" + jsonData);
+
+                case "DELETE_DATA":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("DELETE_DATA failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("DELETE_DATA failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    DeleteData deleteData = objectMapper.readValue(request.getData(), DeleteData.class);
+                    int dataId = deleteData.getId();
+                    boolean deleted = epidemicDataDAO.deleteData(dataId);
+                    if (deleted) {
+                        System.out.println("DELETE_DATA success for data ID " + dataId);
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("DELETE_DATA failed for data ID " + dataId);
+                    return new Response("FAIL");
+
+                case "GET_ALL_USERS":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("GET_ALL_USERS failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    List<User> allUsers = userDAO.getAllUsers();
+                    String usersJson = objectMapper.writeValueAsString(allUsers);
+                    System.out.println("GET_ALL_USERS success for user " + currentUser.getUsername());
+                    return new Response("SUCCESS:" + usersJson);
+
+                case "FIND_USER":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("FIND_USER failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("FIND_USER failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    String searchUsername = objectMapper.readValue(request.getData(), String.class);
+                    User foundUser = userDAO.findByUsername(searchUsername);
+                    if (foundUser != null) {
+                        String userJson = objectMapper.writeValueAsString(foundUser);
+                        System.out.println("FIND_USER success for username " + searchUsername);
+                        return new Response("SUCCESS:" + userJson);
+                    }
+                    System.out.println("FIND_USER failed: User not found - " + searchUsername);
+                    return new Response("FAIL: User not found");
+
+                case "DELETE_USER":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("DELETE_USER failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("DELETE_USER failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    int userId = objectMapper.readValue(request.getData(), Integer.class);
+                    // Не позволяем удалить самого админа
+                    if (userId == currentUser.getUserId()) {
+                        System.out.println("DELETE_USER failed: Cannot delete admin");
+                        return new Response("FAIL: Cannot delete admin");
+                    }
+                    boolean userDeleted = userDAO.deleteUser(userId);
+                    if (userDeleted) {
+                        System.out.println("DELETE_USER success for user ID " + userId);
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("DELETE_USER failed for user ID " + userId);
+                    return new Response("FAIL");
+
+                case "ADD_USER":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("ADD_USER failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("ADD_USER failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    RegisterData addUserData = objectMapper.readValue(request.getData(), RegisterData.class);
+                    String newUsername = addUserData.getUsername();
+                    String newPassword = addUserData.getPassword();
+                    String newRole = addUserData.getRole();
+                    if (newUsername == null || newUsername.trim().isEmpty() || newPassword == null || newPassword.trim().isEmpty()) {
+                        System.out.println("ADD_USER failed: Invalid user data");
+                        return new Response("FAIL: Invalid user data");
+                    }
+                    boolean added = authService.register(newUsername, newPassword, newRole != null ? newRole : "guest");
+                    if (added) {
+                        System.out.println("ADD_USER success for user " + newUsername);
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("ADD_USER failed: User already exists - " + newUsername);
+                    return new Response("FAIL: User already exists");
+
+                case "ADMIN_SUBMIT_DATA":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("ADMIN_SUBMIT_DATA failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("ADMIN_SUBMIT_DATA failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    EpidemicData adminEpidemicData = objectMapper.readValue(request.getData(), EpidemicData.class);
+                    String adminRegion = adminEpidemicData.getRegion();
+                    String adminDate = adminEpidemicData.getDate();
+                    int adminInfected = adminEpidemicData.getInfected();
+                    if (adminRegion == null || adminRegion.trim().isEmpty() || adminDate == null || adminDate.trim().isEmpty() || adminInfected < 0) {
+                        System.out.println("ADMIN_SUBMIT_DATA failed: Invalid epidemic data");
+                        return new Response("FAIL: Invalid epidemic data");
+                    }
+                    boolean adminSaved = epidemicDataDAO.saveEpidemicData(currentUser.getUserId(), adminRegion, adminDate, adminInfected);
+                    if (adminSaved) {
+                        System.out.println("ADMIN_SUBMIT_DATA success for user " + currentUser.getUsername());
+                        return new Response("SUCCESS");
+                    }
+                    System.out.println("ADMIN_SUBMIT_DATA failed: Could not save to database");
+                    return new Response("FAIL");
+
+                default:
+                    System.out.println("Unknown command: " + request.getCommand());
+                    return new Response("FAIL: Unknown command");
+            }
+        } catch (Exception e) {
+            System.out.println("Error processing request " + request.getCommand() + ": " + e.getMessage());
+            return new Response("FAIL: Error processing request - " + e.getMessage());
         }
     }
 }

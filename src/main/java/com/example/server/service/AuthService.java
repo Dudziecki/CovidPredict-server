@@ -16,22 +16,37 @@ public class AuthService {
     }
 
     public User login(String username, String password) throws SQLException {
-        User user = userDAO.getUserByUsername(username);
-        if (user != null && user.getPassword().equals(password)) {
-            logDAO.addLog(user.getId(), "User logged in: " + username);
+        System.out.println("Attempting login for username: " + username);
+        User user = userDAO.findByUsername(username);
+        if (user == null) {
+            System.out.println("User not found: " + username);
+            return null;
+        }
+        System.out.println("User found: " + username + ", stored password: " + user.getPassword() + ", provided password: " + password);
+        if (user.getPassword().equals(password)) {
+            System.out.println("Password match for user: " + username);
+            logDAO.logAction(user.getUserId(), "LOGIN", "User logged in"); // "details" не используется в базе
             return user;
         }
+        System.out.println("Password mismatch for user: " + username);
         return null;
     }
 
     public boolean register(String username, String password, String role) throws SQLException {
-        User existingUser = userDAO.getUserByUsername(username);
+        System.out.println("Attempting registration for username: " + username);
+        User existingUser = userDAO.findByUsername(username);
         if (existingUser != null) {
-            return false; // Пользователь уже существует
+            System.out.println("User already exists: " + username);
+            return false;
         }
-        userDAO.addUser(username, password, role);
-        User newUser = userDAO.getUserByUsername(username);
-        logDAO.addLog(newUser.getId(), "User registered: " + username);
-        return true;
+        boolean saved = userDAO.saveUser(username, password, role);
+        if (saved) {
+            User newUser = userDAO.findByUsername(username);
+            logDAO.logAction(newUser.getUserId(), "REGISTER", "User registered with role " + role); // "details" не используется в базе
+            System.out.println("Registration successful for user: " + username);
+        } else {
+            System.out.println("Registration failed for user: " + username);
+        }
+        return saved;
     }
 }
