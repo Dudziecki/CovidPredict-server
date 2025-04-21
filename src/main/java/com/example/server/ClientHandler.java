@@ -268,6 +268,15 @@ public class ClientHandler implements Runnable {
                     }
                     System.out.println("ADMIN_SUBMIT_DATA failed: Could not save to database");
                     return new Response("FAIL");
+                case "GET_LOGS":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("GET_LOGS failed: Access denied (currentUser=" + (currentUser != null ? currentUser.getUsername() + ", role=" + currentUser.getRole() : "null") + ")");
+                        return new Response("FAIL: Access denied");
+                    }
+                    List<Log> logs = logDAO.getAllLogs();
+                    String logsJson = objectMapper.writeValueAsString(logs);
+                    System.out.println("GET_LOGS success for user " + currentUser.getUsername());
+                    return new Response("SUCCESS:" + logsJson);
 
                 default:
                     System.out.println("Unknown command: " + request.getCommand());

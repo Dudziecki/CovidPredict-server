@@ -5,12 +5,17 @@ import java.sql.Timestamp;
 public class Log {
     private int id;
     private int userId;
+    private String username; // Добавляем поле username
     private String action;
     private Timestamp timestamp;
 
-    public Log(int id, int userId, String action, Timestamp timestamp) {
+    public Log() {
+    }
+
+    public Log(int id, int userId, String username, String action, Timestamp timestamp) {
         this.id = id;
         this.userId = userId;
+        this.username = username;
         this.action = action;
         this.timestamp = timestamp;
     }
@@ -23,6 +28,10 @@ public class Log {
         return userId;
     }
 
+    public String getUsername() {
+        return username;
+    }
+
     public String getAction() {
         return action;
     }
@@ -31,8 +40,28 @@ public class Log {
         return timestamp;
     }
 
+    public void setLogId(int id) {
+        this.id = id;
+    }
+
+    public void setUserId(int userId) {
+        this.userId = userId;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public void setAction(String action) {
+        this.action = action;
+    }
+
+    public void setTimestamp(Timestamp timestamp) {
+        this.timestamp = timestamp;
+    }
+
     @Override
     public String toString() {
-        return "Log{id=" + id + ", userId=" + userId + ", action='" + action + "', timestamp=" + timestamp + "}";
+        return "Log{id=" + id + ", userId=" + userId + ", username='" + username + "', action='" + action + "', timestamp=" + timestamp + "}";
     }
 }
