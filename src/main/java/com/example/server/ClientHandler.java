@@ -3,6 +3,7 @@ package com.example.server;
 import com.example.server.model.*;
 import com.example.server.service.AuthService;
 import com.example.server.dao.*;
+import com.example.server.service.ForecastService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.*;
@@ -40,7 +41,7 @@ public class ClientHandler implements Runnable {
                 System.out.println("Received request: " + jsonRequest);
                 Request request = objectMapper.readValue(jsonRequest, Request.class);
 
-                Response response = processRequest(request, conn);
+                Response response = processRequest(request, conn, writer);
                 String jsonResponse = objectMapper.writeValueAsString(response);
                 System.out.println("Sending response: " + jsonResponse);
                 writer.write(jsonResponse + "\n");
@@ -58,11 +59,12 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private Response processRequest(Request request, Connection conn) throws SQLException {
+    private Response processRequest(Request request, Connection conn, BufferedWriter writer) throws SQLException, IOException {
         DatabaseManager dbManager = new DatabaseManager(conn);
         UserDAO userDAO = new UserDAO(dbManager);
         LogDAO logDAO = new LogDAO(dbManager);
         EpidemicDataDAO epidemicDataDAO = new EpidemicDataDAO(dbManager);
+        ForecastDAO forecastDAO = new ForecastDAO(dbManager); // Добавляем ForecastDAO
         AuthService authService = new AuthService(userDAO, logDAO);
 
         if (request.getCommand() == null) {
@@ -123,14 +125,14 @@ public class ClientHandler implements Runnable {
                         return new Response("FAIL: No data provided");
                     }
                     EpidemicData epidemicData = objectMapper.readValue(request.getData(), EpidemicData.class);
-                    String region = epidemicData.getRegion();
+                    String submitRegion = epidemicData.getRegion();
                     String date = epidemicData.getDate();
                     int infected = epidemicData.getInfected();
-                    if (region == null || region.trim().isEmpty() || date == null || date.trim().isEmpty() || infected < 0) {
+                    if (submitRegion == null || submitRegion.trim().isEmpty() || date == null || date.trim().isEmpty() || infected < 0) {
                         System.out.println("SUBMIT_DATA failed: Invalid epidemic data");
                         return new Response("FAIL: Invalid epidemic data");
                     }
-                    boolean saved = epidemicDataDAO.saveEpidemicData(currentUser.getUserId(), region, date, infected);
+                    boolean saved = epidemicDataDAO.saveEpidemicData(currentUser.getUserId(), submitRegion, date, infected);
                     if (saved) {
                         System.out.println("SUBMIT_DATA success for user " + currentUser.getUsername());
                         return new Response("SUCCESS");
@@ -144,9 +146,9 @@ public class ClientHandler implements Runnable {
                         return new Response("FAIL: Access denied");
                     }
                     List<EpidemicDataDAO.EpidemicDataWithUsername> allData = epidemicDataDAO.getAllData();
-                    String jsonData = objectMapper.writeValueAsString(allData);
+                    String allDataJson = objectMapper.writeValueAsString(allData);
                     System.out.println("GET_ALL_DATA success for user " + currentUser.getUsername());
-                    return new Response("SUCCESS:" + jsonData);
+                    return new Response("SUCCESS:" + allDataJson);
 
                 case "DELETE_DATA":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
@@ -206,7 +208,6 @@ public class ClientHandler implements Runnable {
                         return new Response("FAIL: No data provided");
                     }
                     int userId = objectMapper.readValue(request.getData(), Integer.class);
-                    // Не позволяем удалить самого админа
                     if (userId == currentUser.getUserId()) {
                         System.out.println("DELETE_USER failed: Cannot delete admin");
                         return new Response("FAIL: Cannot delete admin");
@@ -268,6 +269,7 @@ public class ClientHandler implements Runnable {
                     }
                     System.out.println("ADMIN_SUBMIT_DATA failed: Could not save to database");
                     return new Response("FAIL");
+
                 case "GET_LOGS":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
                         System.out.println("GET_LOGS failed: Access denied (currentUser=" + (currentUser != null ? currentUser.getUsername() + ", role=" + currentUser.getRole() : "null") + ")");
@@ -277,6 +279,57 @@ public class ClientHandler implements Runnable {
                     String logsJson = objectMapper.writeValueAsString(logs);
                     System.out.println("GET_LOGS success for user " + currentUser.getUsername());
                     return new Response("SUCCESS:" + logsJson);
+                case "GET_STATISTICS":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("GET_STATISTICS failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    List<EpidemicDataDAO.Statistics> statistics = epidemicDataDAO.getStatistics();
+                    String statsJson = objectMapper.writeValueAsString(statistics);
+                    System.out.println("GET_STATISTICS success for user " + currentUser.getUsername());
+                    return new Response("SUCCESS:" + statsJson);
+                case "GET_EPIDEMIC_DATA":
+                    if (currentUser == null) {
+                        System.out.println("GET_EPIDEMIC_DATA failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("GET_EPIDEMIC_DATA failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    String region = objectMapper.readValue(request.getData(), String.class);
+                    List<EpidemicData> data = epidemicDataDAO.getDataByRegion(region);
+                    String dataJson = objectMapper.writeValueAsString(data);
+                    System.out.println("GET_EPIDEMIC_DATA success for region: " + region);
+                    return new Response("SUCCESS:" + dataJson);
+                case "FORECAST":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("FORECAST failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("FORECAST failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    String forecastRegion = objectMapper.readValue(request.getData(), String.class);
+                    List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(forecastRegion);
+                    if (historicalData.isEmpty()) {
+                        System.out.println("FORECAST failed: No data for region: " + forecastRegion);
+                        return new Response("FAIL: No data for region: " + forecastRegion);
+                    }
+                    ForecastService forecastService = new ForecastService();
+                    List<ForecastService.ForecastResult> forecastResults = forecastService.forecastInfections(historicalData, 7);
+                    String forecastJson = objectMapper.writeValueAsString(forecastResults);
+                    // Сохраняем прогноз в базу данных
+                    forecastDAO.saveForecast(forecastRegion, forecastJson);
+                    System.out.println("FORECAST success for region: " + forecastRegion);
+                    return new Response("SUCCESS:" + forecastJson);
+
+                case "GET_FORECASTS":
+                    List<ForecastDAO.Forecast> forecasts = forecastDAO.getAllForecasts();
+                    String forecastsJson = objectMapper.writeValueAsString(forecasts);
+                    System.out.println("GET_FORECASTS success");
+                    return new Response("SUCCESS:" + forecastsJson);
 
                 default:
                     System.out.println("Unknown command: " + request.getCommand());
