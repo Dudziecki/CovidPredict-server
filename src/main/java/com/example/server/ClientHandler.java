@@ -4,6 +4,8 @@ import com.example.server.model.*;
 import com.example.server.service.AuthService;
 import com.example.server.dao.*;
 import com.example.server.service.ForecastService;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.*;
@@ -64,7 +66,7 @@ public class ClientHandler implements Runnable {
         UserDAO userDAO = new UserDAO(dbManager);
         LogDAO logDAO = new LogDAO(dbManager);
         EpidemicDataDAO epidemicDataDAO = new EpidemicDataDAO(dbManager);
-        ForecastDAO forecastDAO = new ForecastDAO(dbManager); // Добавляем ForecastDAO
+        ForecastDAO forecastDAO = new ForecastDAO(dbManager);
         AuthService authService = new AuthService(userDAO, logDAO);
 
         if (request.getCommand() == null) {
@@ -279,6 +281,7 @@ public class ClientHandler implements Runnable {
                     String logsJson = objectMapper.writeValueAsString(logs);
                     System.out.println("GET_LOGS success for user " + currentUser.getUsername());
                     return new Response("SUCCESS:" + logsJson);
+
                 case "GET_STATISTICS":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
                         System.out.println("GET_STATISTICS failed: Access denied");
@@ -288,6 +291,7 @@ public class ClientHandler implements Runnable {
                     String statsJson = objectMapper.writeValueAsString(statistics);
                     System.out.println("GET_STATISTICS success for user " + currentUser.getUsername());
                     return new Response("SUCCESS:" + statsJson);
+
                 case "GET_EPIDEMIC_DATA":
                     if (currentUser == null) {
                         System.out.println("GET_EPIDEMIC_DATA failed: User not authenticated");
@@ -302,6 +306,7 @@ public class ClientHandler implements Runnable {
                     String dataJson = objectMapper.writeValueAsString(data);
                     System.out.println("GET_EPIDEMIC_DATA success for region: " + region);
                     return new Response("SUCCESS:" + dataJson);
+
                 case "FORECAST":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
                         System.out.println("FORECAST failed: Access denied");
@@ -311,19 +316,26 @@ public class ClientHandler implements Runnable {
                         System.out.println("FORECAST failed: No data provided");
                         return new Response("FAIL: No data provided");
                     }
-                    String forecastRegion = objectMapper.readValue(request.getData(), String.class);
-                    List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(forecastRegion);
-                    if (historicalData.isEmpty()) {
-                        System.out.println("FORECAST failed: No data for region: " + forecastRegion);
-                        return new Response("FAIL: No data for region: " + forecastRegion);
+                    try {
+                        ForecastRequest forecastRequest = objectMapper.readValue(request.getData(), ForecastRequest.class);
+                        String forecastRegion = forecastRequest.getRegion();
+                        int forecastPeriod = forecastRequest.getPeriod();
+                        List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(forecastRegion);
+                        if (historicalData.isEmpty()) {
+                            System.out.println("FORECAST failed: No data for region: " + forecastRegion);
+                            return new Response("FAIL: No data for region: " + forecastRegion);
+                        }
+                        ForecastService forecastService = new ForecastService();
+                        List<ForecastService.ForecastResult> forecastResults = forecastService.forecastInfections(historicalData, forecastPeriod);
+                        forecastDAO.saveForecast(currentUser.getUserId(), forecastRegion, forecastResults); // Передаём userId
+                        System.out.println("FORECAST success for region: " + forecastRegion);
+                        String forecastJson = objectMapper.writeValueAsString(forecastResults);
+                        return new Response("SUCCESS:" + forecastJson);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.out.println("Error processing request FORECAST: " + e.getMessage());
+                        return new Response("FAIL: Error processing request - " + e.getMessage());
                     }
-                    ForecastService forecastService = new ForecastService();
-                    List<ForecastService.ForecastResult> forecastResults = forecastService.forecastInfections(historicalData, 7);
-                    String forecastJson = objectMapper.writeValueAsString(forecastResults);
-                    // Сохраняем прогноз в базу данных
-                    forecastDAO.saveForecast(forecastRegion, forecastJson);
-                    System.out.println("FORECAST success for region: " + forecastRegion);
-                    return new Response("SUCCESS:" + forecastJson);
 
                 case "GET_FORECASTS":
                     List<ForecastDAO.Forecast> forecasts = forecastDAO.getAllForecasts();
@@ -338,6 +350,35 @@ public class ClientHandler implements Runnable {
         } catch (Exception e) {
             System.out.println("Error processing request " + request.getCommand() + ": " + e.getMessage());
             return new Response("FAIL: Error processing request - " + e.getMessage());
+        }
+    }
+
+    public static class ForecastRequest {
+        private String region;
+        private int period;
+
+        @JsonCreator
+        public ForecastRequest(
+                @JsonProperty("region") String region,
+                @JsonProperty("period") int period) {
+            this.region = region;
+            this.period = period;
+        }
+
+        public String getRegion() {
+            return region;
+        }
+
+        public void setRegion(String region) { // Добавляем сеттер
+            this.region = region;
+        }
+
+        public int getPeriod() {
+            return period;
+        }
+
+        public void setPeriod(int period) { // Добавляем сеттер
+            this.period = period;
         }
     }
 }
