@@ -1,7 +1,5 @@
 package com.example.server.dao;
 
-
-
 import com.example.server.service.ForecastService;
 
 import java.sql.PreparedStatement;
@@ -23,7 +21,6 @@ public class ForecastDAO {
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             for (ForecastService.ForecastResult result : forecastResults) {
                 stmt.setInt(1, regionId);
-                // Преобразуем строку даты в java.sql.Date
                 java.sql.Date forecastDate = java.sql.Date.valueOf(result.getDate());
                 stmt.setDate(2, forecastDate);
                 stmt.setInt(3, (int) result.getPredictedInfected());
@@ -34,12 +31,11 @@ public class ForecastDAO {
         }
     }
 
-
     public List<Forecast> getAllForecasts() throws SQLException {
         List<Forecast> forecasts = new ArrayList<>();
-        String sql = "SELECT f.*, r.name AS region_name " +
+        String sql = "SELECT f.*, r.region_name AS region_name " +
                 "FROM forecasts f " +
-                "JOIN regions r ON f.region_id = r.id " +
+                "JOIN regions r ON f.region_id = r.region_id " +
                 "ORDER BY f.created_at DESC";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             ResultSet rs = stmt.executeQuery();
@@ -47,6 +43,7 @@ public class ForecastDAO {
                 Forecast forecast = new Forecast();
                 forecast.setId(rs.getInt("forecast_id"));
                 forecast.setRegionId(rs.getInt("region_id"));
+                forecast.setRegionName(rs.getString("region_name"));
                 forecast.setForecastDate(rs.getString("forecast_date"));
                 forecast.setPredictedCases(rs.getInt("predicted_cases"));
                 forecast.setCreatedBy(rs.getInt("created_by"));
@@ -56,13 +53,41 @@ public class ForecastDAO {
         }
         return forecasts;
     }
+
+    public List<Forecast> getForecastsByRegionAndDateRange(String region, String startDate, String endDate) throws SQLException {
+        List<Forecast> forecasts = new ArrayList<>();
+        int regionId = getRegionIdByName(region);
+        String sql = "SELECT f.*, r.region_name AS region_name " +
+                "FROM forecasts f " +
+                "JOIN regions r ON f.region_id = r.region_id " +
+                "WHERE f.region_id = ? AND f.forecast_date BETWEEN ? AND ?";
+        try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
+            stmt.setInt(1, regionId);
+            stmt.setString(2, startDate);
+            stmt.setString(3, endDate);
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                Forecast forecast = new Forecast();
+                forecast.setId(rs.getInt("forecast_id"));
+                forecast.setRegionId(rs.getInt("region_id"));
+                forecast.setRegionName(rs.getString("region_name"));
+                forecast.setForecastDate(rs.getString("forecast_date"));
+                forecast.setPredictedCases(rs.getInt("predicted_cases"));
+                forecast.setCreatedBy(rs.getInt("created_by"));
+                forecast.setCreatedAt(rs.getTimestamp("created_at").toString());
+                forecasts.add(forecast);
+            }
+        }
+        return forecasts;
+    }
+
     public int getRegionIdByName(String regionName) throws SQLException {
-        String sql = "SELECT region_id FROM regions WHERE region_name = ?"; // Изменили id на region_id
+        String sql = "SELECT region_id FROM regions WHERE region_name = ?";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             stmt.setString(1, regionName);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
-                return rs.getInt("region_id"); // Изменили id на region_id
+                return rs.getInt("region_id");
             } else {
                 throw new SQLException("Region not found: " + regionName);
             }
@@ -71,16 +96,19 @@ public class ForecastDAO {
 
     public static class Forecast {
         private int id;
-        private int regionId; // Изменили на regionId
-        private String forecastDate; // Дата прогноза
-        private int predictedCases; // Прогнозируемое число заражённых
-        private int createdBy; // ID пользователя, создавшего прогноз
+        private int regionId;
+        private String regionName; // Добавляем для передачи имени региона
+        private String forecastDate;
+        private int predictedCases;
+        private int createdBy;
         private String createdAt;
 
         public int getId() { return id; }
         public void setId(int id) { this.id = id; }
         public int getRegionId() { return regionId; }
         public void setRegionId(int regionId) { this.regionId = regionId; }
+        public String getRegionName() { return regionName; }
+        public void setRegionName(String regionName) { this.regionName = regionName; }
         public String getForecastDate() { return forecastDate; }
         public void setForecastDate(String forecastDate) { this.forecastDate = forecastDate; }
         public int getPredictedCases() { return predictedCases; }
