@@ -1,5 +1,8 @@
 package com.example.server;
 
+import com.example.server.dto.CompareDataRequest;
+import com.example.server.dto.CompareDataResponse;
+import com.example.server.dto.ForecastDTO;
 import com.example.server.model.*;
 import com.example.server.service.AuthService;
 import com.example.server.dao.*;
@@ -7,13 +10,16 @@ import com.example.server.service.ForecastService;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.server.model.SupportMessage;
 
 import java.io.*;
 import java.net.Socket;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class ClientHandler implements Runnable {
     private final Socket socket;
@@ -327,9 +333,13 @@ public class ClientHandler implements Runnable {
                         }
                         ForecastService forecastService = new ForecastService();
                         List<ForecastService.ForecastResult> forecastResults = forecastService.forecastInfections(historicalData, forecastPeriod);
-                        forecastDAO.saveForecast(currentUser.getUserId(), forecastRegion, forecastResults); // Передаём userId
+                        forecastDAO.saveForecast(currentUser.getUserId(), forecastRegion, forecastResults);
+                        // Преобразуем ForecastResult в ForecastDTO
+                        List<ForecastDTO> forecastDTOs = forecastResults.stream()
+                                .map(fr -> new ForecastDTO(fr.getDate(), (int) fr.getPredictedInfected(), LocalDate.now().toString()))
+                                .collect(Collectors.toList());
                         System.out.println("FORECAST success for region: " + forecastRegion);
-                        String forecastJson = objectMapper.writeValueAsString(forecastResults);
+                        String forecastJson = objectMapper.writeValueAsString(forecastDTOs);
                         return new Response("SUCCESS:" + forecastJson);
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -339,9 +349,73 @@ public class ClientHandler implements Runnable {
 
                 case "GET_FORECASTS":
                     List<ForecastDAO.Forecast> forecasts = forecastDAO.getAllForecasts();
-                    String forecastsJson = objectMapper.writeValueAsString(forecasts);
+                    // Преобразуем ForecastDAO.Forecast в ForecastDTO
+                    List<ForecastDTO> forecastDTOs = forecasts.stream()
+                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt()))
+                            .collect(Collectors.toList());
+                    String forecastsJson = objectMapper.writeValueAsString(forecastDTOs);
                     System.out.println("GET_FORECASTS success");
                     return new Response("SUCCESS:" + forecastsJson);
+                case "COMPARE_DATA":
+                    CompareDataRequest compareDataRequest = objectMapper.readValue(request.getData(), CompareDataRequest.class);
+                    List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegionAndDateRange(
+                            compareDataRequest.getRegion(),
+                            compareDataRequest.getStartDate(),
+                            compareDataRequest.getEndDate()
+                    );
+                    List<ForecastDAO.Forecast> forecastData = forecastDAO.getForecastsByRegionAndDateRange(
+                            compareDataRequest.getRegion(),
+                            compareDataRequest.getStartDate(),
+                            compareDataRequest.getEndDate()
+                    );
+                    List<ForecastDTO> forecastDTO = forecastData.stream()
+                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt()))
+                            .collect(Collectors.toList());
+                    CompareDataResponse compareDataResponse = new CompareDataResponse();
+                    compareDataResponse.setHistoricalData(historicalData);
+                    compareDataResponse.setForecasts(forecastDTO);
+                    String compareDataJson = objectMapper.writeValueAsString(compareDataResponse);
+                    return new Response("SUCCESS:" + compareDataJson);
+
+                case "GET_USER_MESSAGES":
+                    if (currentUser == null) {
+                        System.out.println("GET_USER_MESSAGES failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    List<SupportMessage> messages = dbManager.getUserMessages(currentUser.getUsername());
+                    String messagesJson = objectMapper.writeValueAsString(messages);
+                    return new Response("SUCCESS:" + messagesJson);
+
+                case "SEND_MESSAGE":
+                    if (currentUser == null) {
+                        System.out.println("SEND_MESSAGE failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    String messageText = objectMapper.readValue(request.getData(), String.class);
+                    com.example.server.model.SupportMessage message = new SupportMessage();
+                    message.setMessage(messageText);
+                    message.setStatus("PENDING");
+                    message.setCreatedAt(LocalDate.now().toString());
+                    dbManager.saveSupportMessage(currentUser.getUsername(), message);
+                    return new Response("SUCCESS");
+
+                case "GET_ALL_MESSAGES":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("GET_ALL_MESSAGES failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    List<SupportMessage> allMessages = dbManager.getAllMessages();
+                    String allMessagesJson = objectMapper.writeValueAsString(allMessages);
+                    return new Response("SUCCESS:" + allMessagesJson);
+
+                case "RESPOND_MESSAGE":
+                    if (currentUser == null || !"admin".equals(currentUser.getRole())) {
+                        System.out.println("RESPOND_MESSAGE failed: Access denied");
+                        return new Response("FAIL: Access denied");
+                    }
+                    SupportMessage updatedMessage = objectMapper.readValue(request.getData(), SupportMessage.class);
+                    dbManager.updateSupportMessage(updatedMessage);
+                    return new Response("SUCCESS");
 
                 default:
                     System.out.println("Unknown command: " + request.getCommand());
