@@ -8,24 +8,35 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ForecastService {
-    private static final double ALPHA = 0.3; // Коэффициент сглаживания
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     public static class ForecastResult {
-        private final LocalDate date;
-        private final double predictedInfected;
+        private final LocalDate forecastDate;
+        private final double predictedCases;
+        private final String createdAt;
+        private final String regionName; // Добавляем поле regionName
 
-        public ForecastResult(LocalDate date, double predictedInfected) {
-            this.date = date;
-            this.predictedInfected = predictedInfected;
+        public ForecastResult(LocalDate forecastDate, double predictedCases, String regionName) {
+            this.forecastDate = forecastDate;
+            this.predictedCases = predictedCases;
+            this.createdAt = LocalDate.now().format(DATE_FORMATTER);
+            this.regionName = regionName; // Инициализируем regionName
         }
 
-        public String getDate() {
-            return date.format(DATE_FORMATTER);
+        public String getForecastDate() {
+            return forecastDate.format(DATE_FORMATTER);
         }
 
-        public double getPredictedInfected() {
-            return predictedInfected;
+        public double getPredictedCases() {
+            return predictedCases;
+        }
+
+        public String getCreatedAt() {
+            return createdAt;
+        }
+
+        public String getRegionName() {
+            return regionName;
         }
     }
 
@@ -34,32 +45,44 @@ public class ForecastService {
             return new ArrayList<>();
         }
 
-        // Выполняем экспоненциальное сглаживание
-        List<Double> smoothedValues = new ArrayList<>();
-        smoothedValues.add((double) historicalData.get(0).getInfected()); // Начальное значение
-
-        for (int i = 1; i < historicalData.size(); i++) {
-            double currentValue = historicalData.get(i).getInfected();
-            double previousSmoothed = smoothedValues.get(i - 1);
-            double smoothed = ALPHA * currentValue + (1 - ALPHA) * previousSmoothed;
-            smoothedValues.add(smoothed);
+        // Если только одна запись, возвращаем её значение как прогноз
+        if (historicalData.size() == 1) {
+            double lastInfected = historicalData.get(0).getInfected();
+            LocalDate lastDate = LocalDate.parse(historicalData.get(0).getDate(), DATE_FORMATTER);
+            List<ForecastResult> forecastResults = new ArrayList<>();
+            String regionName = historicalData.get(0).getRegion(); // Берем регион из первой записи
+            for (int i = 1; i <= daysToForecast; i++) {
+                LocalDate forecastDate = lastDate.plusDays(i);
+                forecastResults.add(new ForecastResult(forecastDate, lastInfected, regionName));
+            }
+            return forecastResults;
         }
 
-        // Последнее сглаженное значение
-        double lastSmoothed = smoothedValues.get(smoothedValues.size() - 1);
+        // Линейная регрессия: y = a + b*x
+        int n = historicalData.size();
+        double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        for (int i = 0; i < n; i++) {
+            sumX += i;
+            sumY += historicalData.get(i).getInfected();
+            sumXY += i * historicalData.get(i).getInfected();
+            sumXX += i * i;
+        }
 
-        // Получаем последнюю дату из исторических данных
+        double b = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+        double a = (sumY - b * sumX) / n;
+
         LocalDate lastDate = LocalDate.parse(historicalData.get(historicalData.size() - 1).getDate(), DATE_FORMATTER);
-
-        // Прогнозируем на daysToForecast дней вперёд
         List<ForecastResult> forecastResults = new ArrayList<>();
+        String regionName = historicalData.get(0).getRegion(); // Берем регион из первой записи
         for (int i = 1; i <= daysToForecast; i++) {
             LocalDate forecastDate = lastDate.plusDays(i);
-            // Для простоты используем последнее сглаженное значение как прогноз
-            forecastResults.add(new ForecastResult(forecastDate, lastSmoothed));
+            double predictedCases = a + b * (n + i - 1);
+            if (predictedCases < 0) {
+                predictedCases = historicalData.get(historicalData.size() - 1).getInfected(); // Возвращаем последнее значение
+            }
+            forecastResults.add(new ForecastResult(forecastDate, predictedCases, regionName));
         }
 
         return forecastResults;
     }
-
 }

@@ -148,7 +148,7 @@ public class ClientHandler implements Runnable {
                     System.out.println("SUBMIT_DATA failed: Could not save to database");
                     return new Response("FAIL");
 
-                case "GET_ALL_DATA":
+                case "GET_ALL_DATA": {
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
                         System.out.println("GET_ALL_DATA failed: Access denied");
                         return new Response("FAIL: Access denied");
@@ -157,6 +157,7 @@ public class ClientHandler implements Runnable {
                     String allDataJson = objectMapper.writeValueAsString(allData);
                     System.out.println("GET_ALL_DATA success for user " + currentUser.getUsername());
                     return new Response("SUCCESS:" + allDataJson);
+                }
 
                 case "DELETE_DATA":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
@@ -298,7 +299,7 @@ public class ClientHandler implements Runnable {
                     System.out.println("GET_STATISTICS success for user " + currentUser.getUsername());
                     return new Response("SUCCESS:" + statsJson);
 
-                case "GET_EPIDEMIC_DATA":
+                case "GET_EPIDEMIC_DATA": {
                     if (currentUser == null) {
                         System.out.println("GET_EPIDEMIC_DATA failed: User not authenticated");
                         return new Response("FAIL: User not authenticated");
@@ -308,10 +309,17 @@ public class ClientHandler implements Runnable {
                         return new Response("FAIL: No data provided");
                     }
                     String region = objectMapper.readValue(request.getData(), String.class);
-                    List<EpidemicData> data = epidemicDataDAO.getDataByRegion(region);
+                    RegionDAO regionDAO = new RegionDAO(dbManager);
+                    int regionId = regionDAO.getRegionIdByName(region);
+                    if (regionId == -1) {
+                        System.out.println("GET_EPIDEMIC_DATA failed: Region not found - " + region);
+                        return new Response("FAIL: Region not found");
+                    }
+                    List<EpidemicData> data = epidemicDataDAO.getDataByRegion(regionId);
                     String dataJson = objectMapper.writeValueAsString(data);
                     System.out.println("GET_EPIDEMIC_DATA success for region: " + region);
                     return new Response("SUCCESS:" + dataJson);
+                }
 
                 case "FORECAST":
                     if (currentUser == null || !"admin".equals(currentUser.getRole())) {
@@ -324,21 +332,31 @@ public class ClientHandler implements Runnable {
                     }
                     try {
                         ForecastRequest forecastRequest = objectMapper.readValue(request.getData(), ForecastRequest.class);
-                        String forecastRegion = forecastRequest.getRegion();
+                        int regionId = forecastRequest.getRegionId();
                         int forecastPeriod = forecastRequest.getPeriod();
-                        List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(forecastRegion);
+
+                        List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(regionId);
                         if (historicalData.isEmpty()) {
-                            System.out.println("FORECAST failed: No data for region: " + forecastRegion);
-                            return new Response("FAIL: No data for region: " + forecastRegion);
+                            System.out.println("FORECAST failed: No data for region_id: " + regionId);
+                            return new Response("FAIL: No data for region_id: " + regionId);
                         }
+
                         ForecastService forecastService = new ForecastService();
                         List<ForecastService.ForecastResult> forecastResults = forecastService.forecastInfections(historicalData, forecastPeriod);
-                        forecastDAO.saveForecast(currentUser.getUserId(), forecastRegion, forecastResults);
-                        // Преобразуем ForecastResult в ForecastDTO
+
+                        RegionDAO regionDAO = new RegionDAO(dbManager);
+                        String regionName = regionDAO.getRegionNameById(regionId);
+                        if (regionName == null) {
+                            return new Response("FAIL: Region not found for region_id: " + regionId);
+                        }
+
+                        forecastDAO.saveForecast(currentUser.getUserId(), regionName, forecastResults);
+
                         List<ForecastDTO> forecastDTOs = forecastResults.stream()
-                                .map(fr -> new ForecastDTO(fr.getDate(), (int) fr.getPredictedInfected(), LocalDate.now().toString()))
+                                .map(fr -> new ForecastDTO(fr.getForecastDate(), (int) fr.getPredictedCases(), fr.getCreatedAt(), fr.getRegionName()))
                                 .collect(Collectors.toList());
-                        System.out.println("FORECAST success for region: " + forecastRegion);
+
+                        System.out.println("FORECAST success for region: " + regionName);
                         String forecastJson = objectMapper.writeValueAsString(forecastDTOs);
                         return new Response("SUCCESS:" + forecastJson);
                     } catch (Exception e) {
@@ -346,18 +364,22 @@ public class ClientHandler implements Runnable {
                         System.out.println("Error processing request FORECAST: " + e.getMessage());
                         return new Response("FAIL: Error processing request - " + e.getMessage());
                     }
-
-                case "GET_FORECASTS":
+                case "GET_FORECASTS": {
                     List<ForecastDAO.Forecast> forecasts = forecastDAO.getAllForecasts();
-                    // Преобразуем ForecastDAO.Forecast в ForecastDTO
                     List<ForecastDTO> forecastDTOs = forecasts.stream()
-                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt()))
+                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt(), f.getRegionName()))
                             .collect(Collectors.toList());
                     String forecastsJson = objectMapper.writeValueAsString(forecastDTOs);
                     System.out.println("GET_FORECASTS success");
                     return new Response("SUCCESS:" + forecastsJson);
-                case "COMPARE_DATA":
+                }
+                case "COMPARE_DATA": {
                     CompareDataRequest compareDataRequest = objectMapper.readValue(request.getData(), CompareDataRequest.class);
+                    RegionDAO regionDAO = new RegionDAO(dbManager);
+                    int regionId = regionDAO.getRegionIdByName(compareDataRequest.getRegion());
+                    if (regionId == -1) {
+                        return new Response("FAIL: Region not found");
+                    }
                     List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegionAndDateRange(
                             compareDataRequest.getRegion(),
                             compareDataRequest.getStartDate(),
@@ -369,13 +391,14 @@ public class ClientHandler implements Runnable {
                             compareDataRequest.getEndDate()
                     );
                     List<ForecastDTO> forecastDTO = forecastData.stream()
-                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt()))
+                            .map(f -> new ForecastDTO(f.getForecastDate(), f.getPredictedCases(), f.getCreatedAt(), f.getRegionName()))
                             .collect(Collectors.toList());
                     CompareDataResponse compareDataResponse = new CompareDataResponse();
                     compareDataResponse.setHistoricalData(historicalData);
                     compareDataResponse.setForecasts(forecastDTO);
                     String compareDataJson = objectMapper.writeValueAsString(compareDataResponse);
                     return new Response("SUCCESS:" + compareDataJson);
+                }
 
                 case "GET_USER_MESSAGES":
                     if (currentUser == null) {
@@ -383,8 +406,18 @@ public class ClientHandler implements Runnable {
                         return new Response("FAIL: User not authenticated");
                     }
                     List<SupportMessage> messages = dbManager.getUserMessages(currentUser.getUsername());
+                    dbManager.markMessagesAsRead(currentUser.getUsername()); // Помечаем как прочитанные
                     String messagesJson = objectMapper.writeValueAsString(messages);
                     return new Response("SUCCESS:" + messagesJson);
+
+                case "GET_UNREAD_MESSAGES_COUNT":
+                    if (currentUser == null) {
+                        System.out.println("GET_UNREAD_MESSAGES_COUNT failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    int unreadCount = dbManager.getUnreadMessagesCount(currentUser.getUsername());
+                    System.out.println("GET_UNREAD_MESSAGES_COUNT success for user " + currentUser.getUsername() + ": " + unreadCount);
+                    return new Response("SUCCESS:" + unreadCount);
 
                 case "SEND_MESSAGE":
                     if (currentUser == null) {
@@ -416,7 +449,101 @@ public class ClientHandler implements Runnable {
                     SupportMessage updatedMessage = objectMapper.readValue(request.getData(), SupportMessage.class);
                     dbManager.updateSupportMessage(updatedMessage);
                     return new Response("SUCCESS");
+                case "GET_REGION_RANKING":
+                    if (currentUser == null) {
+                        System.out.println("GET_REGION_RANKING failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    List<RegionRanking> rankings = epidemicDataDAO.getRegionRanking(5); // Топ-5 регионов
+                    String rankingsJson = objectMapper.writeValueAsString(rankings);
+                    System.out.println("GET_REGION_RANKING success for user " + currentUser.getUsername());
+                    return new Response("SUCCESS:" + rankingsJson);
+                case "EXPORT_DATA":
+                    if (currentUser == null) {
+                        System.out.println("EXPORT_DATA failed: User not authenticated");
+                        return new Response("FAIL: User not authenticated");
+                    }
+                    if (request.getData() == null) {
+                        System.out.println("EXPORT_DATA failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    try {
+                        ExportRequest exportRequest = objectMapper.readValue(request.getData(), ExportRequest.class);
+                        String dataType = exportRequest.getDataType();
+                        String region = exportRequest.getRegion();
 
+                        RegionDAO regionDAO = new RegionDAO(dbManager);
+                        StringBuilder csv = new StringBuilder();
+                        if ("historical".equals(dataType)) {
+                            if ("all".equals(region)) {
+                                List<EpidemicDataDAO.EpidemicDataWithUsername> allData = epidemicDataDAO.getAllData();
+                                csv.append("Date,Region,Infected,SubmittedBy\n");
+                                for (EpidemicDataDAO.EpidemicDataWithUsername d : allData) {
+                                    csv.append(String.format("%s,%s,%d,%s\n", d.getDate(), d.getRegion(), d.getInfected(), d.getUsername()));
+                                }
+                            } else {
+                                int regionId = regionDAO.getRegionIdByName(region);
+                                if (regionId == -1) {
+                                    return new Response("FAIL: Region not found");
+                                }
+                                List<EpidemicData> historicalData = epidemicDataDAO.getDataByRegion(regionId);
+                                csv.append("Date,Region,Infected\n");
+                                for (EpidemicData d : historicalData) {
+                                    csv.append(String.format("%s,%s,%d\n", d.getDate(), d.getRegion(), d.getInfected()));
+                                }
+                            }
+                        } else if ("forecast".equals(dataType)) {
+                            List<ForecastDAO.Forecast> forecasts;
+                            if ("all".equals(region)) {
+                                forecasts = forecastDAO.getAllForecasts();
+                            } else {
+                                int regionId = regionDAO.getRegionIdByName(region);
+                                if (regionId == -1) {
+                                    return new Response("FAIL: Region not found");
+                                }
+                                forecasts = forecastDAO.getAllForecasts().stream()
+                                        .filter(f -> f.getRegionId() == regionId)
+                                        .collect(Collectors.toList());
+                            }
+                            csv.append("Forecast Date,Region,Predicted Cases,Created At\n");
+                            for (ForecastDAO.Forecast f : forecasts) {
+                                csv.append(String.format("%s,%s,%d,%s\n", f.getForecastDate(), f.getRegion(), f.getPredictedCases(), f.getCreatedAt()));
+                            }
+                        } else {
+                            return new Response("FAIL: Invalid data type");
+                        }
+
+                        System.out.println("EXPORT_DATA success for user " + currentUser.getUsername());
+                        return new Response("SUCCESS:" + csv.toString());
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        return new Response("FAIL: Error processing request - " + e.getMessage());
+                    }
+
+                case "GET_REGION_ID":
+                    if (request.getData() == null) {
+                        System.out.println("GET_REGION_ID failed: No data provided");
+                        return new Response("FAIL: No data provided");
+                    }
+                    try {
+                        String region = objectMapper.readValue(request.getData(), String.class);
+                        if (region == null || region.trim().isEmpty()) {
+                            System.out.println("GET_REGION_ID failed: Invalid region name");
+                            return new Response("FAIL: Invalid region name");
+                        }
+                        RegionDAO regionDAO = new RegionDAO(dbManager);
+                        int regionId = regionDAO.getRegionIdByName(region);
+                        if (regionId == -1) {
+                            System.out.println("GET_REGION_ID failed: Region not found - " + region);
+                            return new Response("FAIL: Region not found");
+                        }
+                        System.out.println("GET_REGION_ID success for region: " + region + ", region_id: " + regionId);
+                        return new Response("SUCCESS:" + regionId);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.out.println("Error processing GET_REGION_ID: " + e.getMessage());
+                        return new Response("FAIL: Error processing request - " + e.getMessage());
+                    }
                 default:
                     System.out.println("Unknown command: " + request.getCommand());
                     return new Response("FAIL: Unknown command");
@@ -427,31 +554,56 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    public static class ForecastRequest {
+    public static class RegionRanking {
         private String region;
+        private int totalInfected;
+
+        public RegionRanking(String region, int totalInfected) {
+            this.region = region;
+            this.totalInfected = totalInfected;
+        }
+
+        public String getRegion() { return region; }
+        public void setRegion(String region) { this.region = region; }
+        public int getTotalInfected() { return totalInfected; }
+        public void setTotalInfected(int totalInfected) { this.totalInfected = totalInfected; }
+    }
+
+    public static class ExportRequest {
+        private String dataType; // "historical" или "forecast"
+        private String region;
+
+        public String getDataType() { return dataType; }
+        public void setDataType(String dataType) { this.dataType = dataType; }
+        public String getRegion() { return region; }
+        public void setRegion(String region) { this.region = region; }
+    }
+
+    public static class ForecastRequest {
+        private int regionId;
         private int period;
 
         @JsonCreator
         public ForecastRequest(
-                @JsonProperty("region") String region,
+                @JsonProperty("regionId") int regionId, // Изменяем на regionId
                 @JsonProperty("period") int period) {
-            this.region = region;
+            this.regionId = regionId;
             this.period = period;
         }
 
-        public String getRegion() {
-            return region;
+        public int getRegionId() {
+            return regionId;
         }
 
-        public void setRegion(String region) { // Добавляем сеттер
-            this.region = region;
+        public void setRegionId(int regionId) { // Переименовываем сеттер
+            this.regionId = regionId;
         }
 
         public int getPeriod() {
             return period;
         }
 
-        public void setPeriod(int period) { // Добавляем сеттер
+        public void setPeriod(int period) {
             this.period = period;
         }
     }

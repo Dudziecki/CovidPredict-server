@@ -9,6 +9,7 @@ public class Forecast {
     private Date forecastDate;
     private int predictedCases;
     private int createdBy;
+    private String region;
     private Timestamp createdAt;
 
     public Forecast(int id, int regionId, Date forecastDate, int predictedCases, int createdBy) {

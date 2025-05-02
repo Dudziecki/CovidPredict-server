@@ -17,13 +17,16 @@ public class ForecastDAO {
 
     public void saveForecast(int userId, String region, List<ForecastService.ForecastResult> forecastResults) throws SQLException {
         int regionId = getRegionIdByName(region);
-        String sql = "INSERT INTO forecasts (region_id, forecast_date, predicted_cases, created_by, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
+        if (regionId == -1) {
+            throw new SQLException("Region not found: " + region);
+        }
+        String sql = "INSERT INTO forecasts (region_id, forecast_date, predicted_cases, created_by, created_at) VALUES (?, TO_DATE(?, 'YYYY-MM-DD'), ?, ?, CURRENT_TIMESTAMP)";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             for (ForecastService.ForecastResult result : forecastResults) {
                 stmt.setInt(1, regionId);
-                java.sql.Date forecastDate = java.sql.Date.valueOf(result.getDate());
-                stmt.setDate(2, forecastDate);
-                stmt.setInt(3, (int) result.getPredictedInfected());
+                String forecastDateStr = result.getForecastDate(); // Теперь строка в формате yyyy-MM-dd
+                stmt.setString(2, forecastDateStr);
+                stmt.setInt(3, (int) result.getPredictedCases()); // Приводим double к int
                 stmt.setInt(4, userId);
                 stmt.addBatch();
             }
@@ -60,7 +63,7 @@ public class ForecastDAO {
         String sql = "SELECT f.*, r.region_name AS region_name " +
                 "FROM forecasts f " +
                 "JOIN regions r ON f.region_id = r.region_id " +
-                "WHERE f.region_id = ? AND f.forecast_date BETWEEN ? AND ?";
+                "WHERE f.region_id = ? AND f.forecast_date BETWEEN TO_DATE(?, 'YYYY-MM-DD') AND TO_DATE(?, 'YYYY-MM-DD')";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             stmt.setInt(1, regionId);
             stmt.setString(2, startDate);
@@ -102,6 +105,7 @@ public class ForecastDAO {
         private int predictedCases;
         private int createdBy;
         private String createdAt;
+        private String region;
 
         public int getId() { return id; }
         public void setId(int id) { this.id = id; }
@@ -117,5 +121,7 @@ public class ForecastDAO {
         public void setCreatedBy(int createdBy) { this.createdBy = createdBy; }
         public String getCreatedAt() { return createdAt; }
         public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
+        public String getRegion() { return region; } // Добавляем геттер
+        public void setRegion(String region) { this.region = region; }
     }
 }

@@ -28,6 +28,28 @@ public class RegionDAO {
         stmt.setInt(1, regionId);
         stmt.executeUpdate();
     }
+    public int getRegionIdByName(String regionName) throws SQLException {
+        String sql = "SELECT region_id FROM regions WHERE region_name = ?";
+        try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
+            stmt.setString(1, regionName);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("region_id");
+            }
+            return -1; // Возвращаем -1, если регион не найден
+        }
+    }
+    public String getRegionNameById(int regionId) throws SQLException {
+        String sql = "SELECT region_name FROM regions WHERE region_id = ?";
+        try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
+            stmt.setInt(1, regionId);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("region_name");
+            }
+            return null; // Возвращаем null, если регион не найден
+        }
+    }
 
     public List<Region> getAllRegions() throws SQLException {
         List<Region> regions = new ArrayList<>();

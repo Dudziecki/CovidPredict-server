@@ -1,5 +1,6 @@
 package com.example.server.dao;
 
+import com.example.server.ClientHandler;
 import com.example.server.model.EpidemicData;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -27,11 +28,13 @@ public class EpidemicDataDAO {
             return stmt.executeUpdate() > 0;
         }
     }
-    public List<EpidemicData> getDataByRegion(String region) throws SQLException {
+    public List<EpidemicData> getDataByRegion(int regionId) throws SQLException {
         List<EpidemicData> dataList = new ArrayList<>();
-        String sql = "SELECT * FROM epidemic_data WHERE region = ? ORDER BY date ASC";
+        String sql = "SELECT ed.* FROM epidemic_data ed " +
+                "JOIN regions r ON ed.region = r.region_name " +
+                "WHERE r.region_id = ? ORDER BY ed.date ASC";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
-            stmt.setString(1, region);
+            stmt.setInt(1, regionId);
             ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
                 EpidemicData data = new EpidemicData();
@@ -101,11 +104,14 @@ public class EpidemicDataDAO {
     }
     public List<EpidemicData> getDataByRegionAndDateRange(String region, String startDate, String endDate) throws SQLException {
         List<EpidemicData> data = new ArrayList<>();
-        String sql = "SELECT * FROM epidemic_data " +
-                "WHERE region = ? AND date BETWEEN TO_DATE(?, 'YYYY-MM-DD') AND TO_DATE(?, 'YYYY-MM-DD') " +
-                "ORDER BY date ASC";
+        RegionDAO regionDAO = new RegionDAO(dbManager);
+        int regionId = regionDAO.getRegionIdByName(region);
+        if (regionId == -1) {
+            throw new SQLException("Region not found: " + region);
+        }
+        String sql = "SELECT * FROM epidemic_data WHERE region = ? AND date BETWEEN TO_DATE(?, 'YYYY-MM-DD') AND TO_DATE(?, 'YYYY-MM-DD') ORDER BY date ASC";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
-            stmt.setString(1, region);
+            stmt.setString(1, region); // Используем имя региона напрямую, если в таблице epidemic_data есть поле region
             stmt.setString(2, startDate);
             stmt.setString(3, endDate);
             ResultSet rs = stmt.executeQuery();
@@ -119,6 +125,24 @@ public class EpidemicDataDAO {
             }
         }
         return data;
+    }
+    public List<ClientHandler.RegionRanking> getRegionRanking(int limit) throws SQLException {
+        List<ClientHandler.RegionRanking> rankings = new ArrayList<>();
+        String sql = "SELECT region, SUM(infected) as total_infected " +
+                "FROM epidemic_data " +
+                "GROUP BY region " +
+                "ORDER BY total_infected DESC " +
+                "LIMIT ?";
+        try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
+            stmt.setInt(1, limit);
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                String region = rs.getString("region");
+                int totalInfected = rs.getInt("total_infected");
+                rankings.add(new ClientHandler.RegionRanking(region, totalInfected));
+            }
+        }
+        return rankings;
     }
 
 

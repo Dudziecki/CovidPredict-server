@@ -60,7 +60,8 @@ public class DatabaseManager {
                     "message TEXT NOT NULL, " +
                     "status VARCHAR(50) NOT NULL, " +
                     "response TEXT, " +
-                    "created_at VARCHAR(50) NOT NULL)");
+                    "created_at VARCHAR(50) NOT NULL, " +
+                    "is_read BOOLEAN DEFAULT FALSE)");
         }
     }
 
@@ -89,12 +90,32 @@ public class DatabaseManager {
     }
 
     public void saveSupportMessage(String username, SupportMessage message) throws SQLException {
-        String sql = "INSERT INTO support_messages (username, message, status, created_at) VALUES (?, ?, ?, ?)";
+        String sql = "INSERT INTO support_messages (username, message, status, created_at, is_read) VALUES (?, ?, ?, ?, FALSE)";
         try (PreparedStatement stmt = prepareStatement(sql)) {
             stmt.setString(1, username);
             stmt.setString(2, message.getMessage());
             stmt.setString(3, message.getStatus());
             stmt.setString(4, message.getCreatedAt());
+            stmt.executeUpdate();
+        }
+    }
+
+    public int getUnreadMessagesCount(String username) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM support_messages WHERE username = ? AND status = 'RESPONDED' AND is_read = FALSE";
+        try (PreparedStatement stmt = prepareStatement(sql)) {
+            stmt.setString(1, username);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+            return 0;
+        }
+    }
+
+    public void markMessagesAsRead(String username) throws SQLException {
+        String sql = "UPDATE support_messages SET is_read = TRUE WHERE username = ? AND status = 'RESPONDED'";
+        try (PreparedStatement stmt = prepareStatement(sql)) {
+            stmt.setString(1, username);
             stmt.executeUpdate();
         }
     }
