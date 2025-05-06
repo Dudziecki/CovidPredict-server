@@ -1,7 +1,7 @@
 module com.example.server {
     requires java.sql;
     requires com.fasterxml.jackson.databind;
-
+    requires jbcrypt;
     exports com.example.server;
     exports com.example.server.model;
     opens com.example.server.model to com.fasterxml.jackson.databind;
