@@ -3,6 +3,7 @@ package com.example.server.service;
 import com.example.server.dao.LogDAO;
 import com.example.server.dao.UserDAO;
 import com.example.server.model.User;
+import com.example.server.util.PasswordUtil; // Импортируем PasswordUtil
 
 import java.sql.SQLException;
 
@@ -22,10 +23,10 @@ public class AuthService {
             System.out.println("User not found: " + username);
             return null;
         }
-        System.out.println("User found: " + username + ", stored password: " + user.getPassword() + ", provided password: " + password);
-        if (user.getPassword().equals(password)) {
+        System.out.println("User found: " + username + ", stored password (hashed): " + user.getPassword() + ", provided password: " + password);
+        if (PasswordUtil.checkPassword(password, user.getPassword())) { // Проверяем пароль
             System.out.println("Password match for user: " + username);
-            logDAO.logAction(user.getUserId(), "LOGIN", "User logged in"); // "details" не используется в базе
+            logDAO.logAction(user.getUserId(), "LOGIN", "User logged in");
             return user;
         }
         System.out.println("Password mismatch for user: " + username);
@@ -39,10 +40,12 @@ public class AuthService {
             System.out.println("User already exists: " + username);
             return false;
         }
-        boolean saved = userDAO.saveUser(username, password, role);
+        // Хешируем пароль перед сохранением
+        String hashedPassword = PasswordUtil.hashPassword(password);
+        boolean saved = userDAO.saveUser(username, hashedPassword, role);
         if (saved) {
             User newUser = userDAO.findByUsername(username);
-            logDAO.logAction(newUser.getUserId(), "REGISTER", "User registered with role " + role); // "details" не используется в базе
+            logDAO.logAction(newUser.getUserId(), "REGISTER", "User registered with role " + role);
             System.out.println("Registration successful for user: " + username);
         } else {
             System.out.println("Registration failed for user: " + username);
