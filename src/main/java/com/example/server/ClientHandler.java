@@ -122,7 +122,6 @@ public class ClientHandler implements Runnable {
                     }
                     System.out.println("REGISTER failed: User already exists: " + regUsername);
                     return new Response("FAIL");
-
                 case "SUBMIT_DATA":
                     if (currentUser == null) {
                         System.out.println("SUBMIT_DATA failed: User not authenticated");
