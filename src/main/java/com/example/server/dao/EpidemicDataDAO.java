@@ -2,6 +2,7 @@ package com.example.server.dao;
 
 import com.example.server.ClientHandler;
 import com.example.server.model.EpidemicData;
+import com.example.server.model.Region;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -18,12 +19,23 @@ public class EpidemicDataDAO {
         this.dbManager = dbManager;
     }
 
+    // В EpidemicDataDAO.java
     public boolean saveEpidemicData(int userId, String region, String date, int infected) throws SQLException {
+        // Проверяем и добавляем регион, если его нет
+        RegionDAO regionDAO = new RegionDAO(dbManager);
+        int regionId = regionDAO.getRegionIdByName(region);
+        if (regionId == -1) {
+            // Регион не существует, добавляем его
+            Region newRegion = new Region(-1, region); // regionId будет установлен автоматически
+            regionDAO.addRegion(newRegion);
+        }
+
+        // Сохраняем данные в epidemic_data
         String sql = "INSERT INTO epidemic_data (user_id, region, date, infected) VALUES (?, ?, TO_DATE(?, 'YYYY-MM-DD'), ?)";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
             stmt.setInt(1, userId);
             stmt.setString(2, region);
-            stmt.setString(3, date); // Передаём строку, которая будет преобразована в DATE
+            stmt.setString(3, date);
             stmt.setInt(4, infected);
             return stmt.executeUpdate() > 0;
         }
