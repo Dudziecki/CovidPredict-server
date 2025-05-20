@@ -42,7 +42,6 @@ public class Server {
 
     public static void main(String[] args) {
         try {
-
             Server server = new Server("src/main/resources/com/example/server/server.properties");
             server.start();
         } catch (IOException e) {

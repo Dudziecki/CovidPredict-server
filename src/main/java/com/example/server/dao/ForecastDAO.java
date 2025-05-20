@@ -84,6 +84,7 @@ public class ForecastDAO {
         return forecasts;
     }
 
+    // В ForecastDAO.java
     public int getRegionIdByName(String regionName) throws SQLException {
         String sql = "SELECT region_id FROM regions WHERE region_name = ?";
         try (PreparedStatement stmt = dbManager.prepareStatement(sql)) {
@@ -91,9 +92,8 @@ public class ForecastDAO {
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
                 return rs.getInt("region_id");
-            } else {
-                throw new SQLException("Region not found: " + regionName);
             }
+            return -1; // Возвращаем -1, если регион не найден
         }
     }
 
